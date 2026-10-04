@@ -15,6 +15,21 @@ Install the library using pip:
 pip install ddredis
 ```
 
+## Development
+
+The project runs entirely in Docker. Requires Docker and [Fabric](https://www.fabfile.org/) on the host:
+
+```bash
+fab build      # build the dev image
+fab tests      # run pytest
+fab linters    # run ruff (with --fix), ty and complexipy
+fab shell      # IPython inside the container
+fab bash       # bash inside the container
+```
+
+This project was generated from [dd-lib-stub](https://github.com/davyddd/dd-lib-stub);
+run `copier update` to pull in template updates.
+
 ## GenericCache
 
 Caches domain objects in Redis as JSON. The domain class must provide `model_validate_json` and
@@ -54,9 +69,25 @@ await cache.get_list(key_prefix='team-a')                              # every :
 await cache.delete_by_filters(key_prefix='team-a')
 ```
 
-`get_with_retries(key, attempts=4, delay_seconds=1.0)` repeats `get` across a few seconds: a worker that has
-just been reloaded can fail its first read on a stale connection, and a value written a moment ago must not
-look missing because of it. Retries cannot make an expired entry reappear.
+Redis errors are swallowed on purpose: for a cache, "unavailable" and "miss" lead to the same fallback. Do
+not use the cache for state where `None` has a meaning of its own. Transient failures (a worker that was just
+reloaded, a dropped connection) belong to the client, not to the cache: redis-py retries the errors listed in
+`retry_on_error` with its default `Retry` (3 attempts, exponential backoff with jitter), so a production client
+looks like this:
+
+```python
+from redis.asyncio import Redis
+from redis.exceptions import ConnectionError, TimeoutError
+
+redis_client = Redis.from_url(
+    'redis://localhost/0',
+    max_connections=20,
+    socket_connect_timeout=5,
+    socket_timeout=1,
+    retry_on_error=[ConnectionError, TimeoutError],
+    decode_responses=True,
+)
+```
 
 ## RedisLock
 
@@ -85,17 +116,3 @@ already expired.
 Decorator for async functions: `RedisError` subclasses become a `None` result, everything else propagates.
 `GenericCache` methods use it; apply it to your own Redis reads that should degrade instead of failing.
 
-## Development
-
-The project runs entirely in Docker. Requires Docker and [Fabric](https://www.fabfile.org/) on the host:
-
-```bash
-fab build      # build the dev image
-fab tests      # run pytest
-fab linters    # run ruff (with --fix), ty and complexipy
-fab shell      # IPython inside the container
-fab bash       # bash inside the container
-```
-
-This project was generated from [dd-lib-stub](https://github.com/davyddd/dd-lib-stub);
-run `copier update` to pull in template updates.

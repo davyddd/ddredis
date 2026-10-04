@@ -1,4 +1,3 @@
-import asyncio
 from typing import ClassVar
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
@@ -119,31 +118,3 @@ class TestGenericCache(IsolatedAsyncioTestCase):
         with patch.object(ProfileCache.redis_client, 'get', side_effect=RedisConnectionError('down')):
             # Act & Assert
             self.assertIsNone(await self.cache.get(key=1))
-
-    async def test_get_with_retries_rides_out_a_dropped_connection(self):
-        # Arrange
-        await self.cache.create(key=1, value=self.profile)
-        original_get = ProfileCache.redis_client.get
-        calls = {'count': 0}
-
-        async def flaky_get(key):
-            calls['count'] += 1
-            if calls['count'] == 1:
-                raise RedisConnectionError('down')
-            return await original_get(key)
-
-        with patch.object(ProfileCache.redis_client, 'get', side_effect=flaky_get), patch.object(asyncio, 'sleep'):
-            # Act
-            cached = await self.cache.get_with_retries(key=1, attempts=3, delay_seconds=0)
-
-        # Assert
-        self.assertEqual(cached, self.profile)
-        self.assertEqual(calls['count'], 2)
-
-    async def test_get_with_retries_gives_up(self):
-        # Act
-        with patch.object(asyncio, 'sleep'):
-            cached = await self.cache.get_with_retries(key=404, attempts=2, delay_seconds=0)
-
-        # Assert
-        self.assertIsNone(cached)
