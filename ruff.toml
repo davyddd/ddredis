@@ -13,7 +13,7 @@ exclude = [
     "fabfile.py",
 ]
 line-length = 128
-target-version = "py312"
+target-version = "py311"
 output-format = "concise"
 
 
