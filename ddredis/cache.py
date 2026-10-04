@@ -1,7 +1,7 @@
 from abc import ABC
 from functools import cached_property
 from random import randint
-from typing import ClassVar, Protocol, Self, TypeVar, cast
+from typing import ClassVar, Generic, Protocol, Self, TypeVar, cast
 
 from ddutils.class_helpers import get_generic_base_argument
 from ddutils.convertors import convert_camel_case_to_snake_case
@@ -25,7 +25,10 @@ class Stringable(Protocol):
     def __str__(self) -> str: ...
 
 
-class GenericCache[DomainT: Serializable](ABC):
+DomainT = TypeVar('DomainT', bound=Serializable)
+
+
+class GenericCache(ABC, Generic[DomainT]):
     """
     GenericCache: An async generic caching repository for managing domain objects in Redis.
 

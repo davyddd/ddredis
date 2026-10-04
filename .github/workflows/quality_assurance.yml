@@ -16,6 +16,6 @@ jobs:
     quality-assurance:
         uses: davyddd/dd-lib-stub/.github/workflows/quality_assurance.yml@v0.0.9
         with:
-            test-matrix: '{"python-version": ["3.12", "3.13", "3.14"], "redis": ["redis<6", "redis<7", "redis<9"]}'
+            test-matrix: '{"python-version": ["3.11", "3.12", "3.13", "3.14"], "redis": ["redis<6", "redis<7", "redis<9"]}'
             default-python-version: '3.14'
         secrets: inherit

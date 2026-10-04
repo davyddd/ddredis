@@ -1,6 +1,6 @@
 import json
 from dataclasses import asdict, dataclass
-from typing import ClassVar, Self
+from typing import ClassVar, Generic, Self, TypeVar
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 from uuid import UUID
@@ -132,8 +132,10 @@ class TestGenericCacheEdgeCases(IsolatedAsyncioTestCase):
             self.assertIsNone(await cache.delete_by_filters(key_prefix='a'))
 
     def test_generic_subclass_must_bind_the_domain_type(self):
+        T = TypeVar('T', bound=BaseModel)
+
         # Act & Assert: a still-generic intermediate class is not a usable cache
         with self.assertRaises(TypeError):
 
-            class StillGeneric[T: BaseModel](GenericCache[T]):
+            class StillGeneric(GenericCache[T], Generic[T]):
                 redis_client: ClassVar[Redis] = redis_client
