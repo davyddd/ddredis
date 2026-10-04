@@ -1,0 +1,23 @@
+name: Quality Assurance
+
+on:
+    push:
+        branches:
+            - main
+    pull_request:
+        branches:
+            - main
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    quality-assurance:
+        uses: davyddd/dd-lib-stub/.github/workflows/quality_assurance.yml@v0.0.7
+        with:
+            package-name: ddredis
+            test-matrix: '{"python-version": ["3.12", "3.13", "3.14"], "redis": ["redis<6", "redis<7", "redis<9"]}'
+            default-python-version: '3.14'
+            upload-coverage: ${{ github.event_name == 'push' }}
+        secrets: inherit

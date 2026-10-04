@@ -1,0 +1,10 @@
+# Changes here will be overwritten by Copier; do NOT edit manually.
+_commit: v0.0.7
+_src_path: gh:davyddd/dd-lib-stub
+copyright_year: 2026
+max_python_version: '3.14'
+min_python_version: '3.12'
+package_description: 'Redis helpers: generic JSON cache and distributed lock'
+package_keywords: python, redis, cache, lock, ddredis
+package_name: ddredis
+test_matrix: '{"redis": ["redis<6", "redis<7", "redis<9"]}'
