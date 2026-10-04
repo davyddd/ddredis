@@ -14,10 +14,17 @@ concurrency:
 
 jobs:
     quality-assurance:
-        uses: davyddd/dd-lib-stub/.github/workflows/quality_assurance.yml@v0.0.7
+        uses: davyddd/dd-lib-stub/.github/workflows/quality_assurance.yml@v0.0.8
         with:
-            package-name: ddredis
             test-matrix: '{"python-version": ["3.12", "3.13", "3.14"], "redis": ["redis<6", "redis<7", "redis<9"]}'
             default-python-version: '3.14'
-            upload-coverage: ${{ github.event_name == 'push' }}
+        secrets: inherit
+    coverage:
+        # after the checks and only for pushes to main: pull requests do not upload coverage
+        needs: quality-assurance
+        if: ${{ github.event_name == 'push' }}
+        uses: davyddd/dd-lib-stub/.github/workflows/coverage.yml@v0.0.8
+        with:
+            package-name: ddredis
+            python-version: '3.14'
         secrets: inherit
