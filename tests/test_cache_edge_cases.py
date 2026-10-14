@@ -1,10 +1,13 @@
 import json
+import os
 from dataclasses import asdict, dataclass
-from typing import ClassVar, Generic, Self, TypeVar
+from typing import Generic, Self, TypeVar
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 from uuid import UUID
 
+from ddutils.connections import ConnectionManagerFactory
+from ddutils.scoped_registry import ScopedRegistry
 from fakeredis.aioredis import FakeRedis
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -13,6 +16,9 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from ddredis.cache import GenericCache
 
 redis_client = FakeRedis()
+client_factory = ConnectionManagerFactory(
+    {'cache': ScopedRegistry[Redis](create_func=lambda: redis_client, scope_func=os.getpid)}, default='cache'
+)
 
 
 class UserProfile(BaseModel):
@@ -21,7 +27,7 @@ class UserProfile(BaseModel):
 
 class UserProfileCache(GenericCache[UserProfile]):
     ttl = 5  # jitter of 10% rounds down to 0
-    redis_client: ClassVar[Redis] = redis_client
+    client_factory = client_factory
 
 
 class Order(BaseModel):
@@ -29,7 +35,7 @@ class Order(BaseModel):
 
 
 class OrderCache(GenericCache[Order]):
-    redis_client: ClassVar[Redis] = redis_client
+    client_factory = client_factory
 
 
 @dataclass
@@ -47,7 +53,7 @@ class PlainEvent:
 
 
 class PlainEventCache(GenericCache[PlainEvent]):
-    redis_client: ClassVar[Redis] = redis_client
+    client_factory = client_factory
 
 
 class TestGenericCacheEdgeCases(IsolatedAsyncioTestCase):
@@ -138,4 +144,4 @@ class TestGenericCacheEdgeCases(IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
 
             class StillGeneric(GenericCache[T], Generic[T]):
-                redis_client: ClassVar[Redis] = redis_client
+                client_factory = client_factory

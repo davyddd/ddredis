@@ -37,15 +37,43 @@ Caches domain objects in Redis as JSON. The domain class must provide `model_val
 the class `ttl` with ±10% jitter so a burst of writes does not expire at once, and Redis errors turn into
 "not found" instead of failing the caller.
 
+The client is obtained for every call from `client_factory`, a `ConnectionManagerFactory` from
+[ddutils](https://github.com/davyddd/ddutils) called with `alias`, the way a [ddsql](https://github.com/davyddd/ddsql)
+adapter runs a query inside `factory(alias=...)`: the factory owns which Redis the alias means, the scope the
+client lives in (one `ScopedRegistry` per alias, a client per process and event loop, since `redis.asyncio`
+connections bind to the loop they were opened in), its lazy creation and its close on shutdown.
+
 ```python
+import asyncio
+import os
+from enum import Enum
+from functools import partial
 from typing import ClassVar
 
+from ddutils.connections import ConnectionManagerFactory
+from ddutils.scoped_registry import ScopedRegistry
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from ddredis.cache import GenericCache
 
-redis_client = Redis.from_url('redis://localhost/0')
+
+class RedisConnectionAlias(str, Enum):
+    CACHE = 'cache'
+
+
+def client_scope() -> tuple[int, asyncio.AbstractEventLoop]:
+    return os.getpid(), asyncio.get_running_loop()
+
+
+client_registries = {
+    RedisConnectionAlias.CACHE: ScopedRegistry[Redis](
+        create_func=partial(Redis.from_url, 'redis://localhost/0'),
+        scope_func=client_scope,
+        destructor_method_name='aclose',
+    ),
+}
+redis_client_factory = ConnectionManagerFactory(client_registries, default=RedisConnectionAlias.CACHE)
 
 
 class Profile(BaseModel):
@@ -55,7 +83,8 @@ class Profile(BaseModel):
 
 class ProfileCache(GenericCache[Profile]):
     ttl = 10 * 60  # seconds
-    redis_client: ClassVar[Redis] = redis_client
+    client_factory = redis_client_factory
+    # alias = RedisConnectionAlias.CACHE  # None picks the factory's default
 
 
 cache = ProfileCache()
@@ -67,19 +96,22 @@ await cache.delete(key=1)
 
 await cache.get_list(key_prefix='team-a')                              # every :profile:team-a* entry
 await cache.delete_by_filters(key_prefix='team-a')
+
+await redis_client_factory.close()                                     # on shutdown
 ```
 
 Redis errors are swallowed on purpose: for a cache, "unavailable" and "miss" lead to the same fallback. Do
 not use the cache for state where `None` has a meaning of its own. Transient failures (a worker that was just
 reloaded, a dropped connection) belong to the client, not to the cache: redis-py retries the errors listed in
-`retry_on_error` with its default `Retry` (3 attempts, exponential backoff with jitter), so a production client
-looks like this:
+`retry_on_error` with its default `Retry` (3 attempts, exponential backoff with jitter), so a production
+`create_func` looks like this:
 
 ```python
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError, TimeoutError
 
-redis_client = Redis.from_url(
+create_client = partial(
+    Redis.from_url,
     'redis://localhost/0',
     max_connections=20,
     socket_connect_timeout=5,
@@ -98,7 +130,7 @@ held lock raises `AlreadyAcquiredError` unless `blocking=True`, in which case it
 from ddredis.lock import AlreadyAcquiredError, RedisLock
 
 try:
-    async with RedisLock(redis_client, 'sync-profiles', timeout=30):
+    async with redis_client_factory() as redis_client, RedisLock(redis_client, 'sync-profiles', timeout=30):
         await sync_profiles()
 except AlreadyAcquiredError:
     pass  # another worker is on it
