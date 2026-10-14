@@ -1,7 +1,9 @@
-from typing import ClassVar
+import os
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from ddutils.connections import ConnectionManagerFactory
+from ddutils.scoped_registry import ScopedRegistry
 from fakeredis.aioredis import FakeRedis
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -19,9 +21,15 @@ TTL = 100
 JITTER = TTL * 10 // 100
 
 
+redis_client = FakeRedis()
+client_factory = ConnectionManagerFactory(
+    {'cache': ScopedRegistry[Redis](create_func=lambda: redis_client, scope_func=os.getpid)}, default='cache'
+)
+
+
 class ProfileCache(GenericCache[Profile]):
     ttl = TTL
-    redis_client: ClassVar[Redis] = FakeRedis()
+    client_factory = client_factory
 
 
 class TestGenericCache(IsolatedAsyncioTestCase):
@@ -30,14 +38,48 @@ class TestGenericCache(IsolatedAsyncioTestCase):
         self.profile = Profile(profile_id=1, name='John')
 
     async def asyncSetUp(self):
-        await ProfileCache.redis_client.flushall()
+        await redis_client.flushall()
 
     def test_subclass_must_declare_domain_type(self):
         # Act & Assert
         with self.assertRaises(TypeError):
 
             class UntypedCache(GenericCache):  # type: ignore[type-arg]
-                redis_client: ClassVar[Redis] = FakeRedis()
+                client_factory = client_factory
+
+    def test_subclass_must_point_to_a_factory(self):
+        # Act & Assert
+        with self.assertRaisesRegex(AttributeError, 'client_factory.*must be set'):
+
+            class NoFactory(GenericCache[Profile]):
+                pass
+
+        with self.assertRaisesRegex(TypeError, 'client_factory.*must be ConnectionManagerFactory'):
+
+            class ClientInstead(GenericCache[Profile]):
+                client_factory = redis_client  # type: ignore[assignment]
+
+    async def test_alias_picks_the_registry(self):
+        # Arrange
+        replica = FakeRedis()
+        factory = ConnectionManagerFactory(
+            {
+                'cache': ScopedRegistry[Redis](create_func=lambda: redis_client, scope_func=os.getpid),
+                'replica': ScopedRegistry[Redis](create_func=lambda: replica, scope_func=os.getpid),
+            },
+            default='cache',
+        )
+
+        class ReplicaProfileCache(GenericCache[Profile]):
+            client_factory = factory
+            alias = 'replica'
+
+        # Act
+        await ReplicaProfileCache().create(key=1, value=self.profile)
+
+        # Assert
+        self.assertEqual(await replica.exists(':profile:1'), 1)
+        self.assertEqual(await redis_client.exists(':profile:1'), 0)
 
     def test_key_is_prefixed_with_the_domain_name(self):
         # Act & Assert
@@ -59,7 +101,7 @@ class TestGenericCache(IsolatedAsyncioTestCase):
         # Assert
         self.assertEqual(cached, self.profile)
         self.assertIsInstance(cached, Profile)
-        ttl = await ProfileCache.redis_client.ttl(':profile:1')
+        ttl = await redis_client.ttl(':profile:1')
         self.assertTrue(TTL - JITTER <= ttl <= TTL + JITTER, ttl)
 
     async def test_get_missing_key(self):
@@ -68,7 +110,7 @@ class TestGenericCache(IsolatedAsyncioTestCase):
 
     async def test_get_ignores_unparseable_payload(self):
         # Arrange
-        await ProfileCache.redis_client.set(':profile:1', 'not json')
+        await redis_client.set(':profile:1', 'not json')
 
         # Act & Assert
         self.assertIsNone(await self.cache.get(key=1))
@@ -115,6 +157,6 @@ class TestGenericCache(IsolatedAsyncioTestCase):
 
     async def test_redis_errors_are_suppressed(self):
         # Arrange
-        with patch.object(ProfileCache.redis_client, 'get', side_effect=RedisConnectionError('down')):
+        with patch.object(redis_client, 'get', side_effect=RedisConnectionError('down')):
             # Act & Assert
             self.assertIsNone(await self.cache.get(key=1))
