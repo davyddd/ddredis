@@ -1,7 +1,12 @@
 import asyncio
+import os
 from unittest import IsolatedAsyncioTestCase
 
+from ddutils.connections import ConnectionManagerFactory
+from ddutils.scoped_registry import ScopedRegistry
 from fakeredis.aioredis import FakeRedis
+from redis.asyncio import Redis
+from redis.exceptions import LockError
 
 from ddredis.lock import AlreadyAcquiredError, RedisLock
 
@@ -13,10 +18,13 @@ class TestRedisLock(IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.redis_client = FakeRedis()
         await self.redis_client.flushall()
+        self.factory = ConnectionManagerFactory(
+            {'cache': ScopedRegistry[Redis](create_func=lambda: self.redis_client, scope_func=os.getpid)}, default='cache'
+        )
 
     async def test_acquire_and_release(self):
         # Act
-        async with RedisLock(self.redis_client, 'job', timeout=10) as lock:
+        async with RedisLock(self.factory, 'job', timeout=10) as lock:
             held = await self.redis_client.exists('job')
 
         # Assert
@@ -26,10 +34,10 @@ class TestRedisLock(IsolatedAsyncioTestCase):
 
     async def test_second_holder_is_rejected(self):
         # Arrange
-        async with RedisLock(self.redis_client, 'job', timeout=10):
+        async with RedisLock(self.factory, 'job', timeout=10):
             # Act & Assert
             with self.assertRaises(AlreadyAcquiredError):
-                async with RedisLock(self.redis_client, 'job', timeout=10):
+                async with RedisLock(self.factory, 'job', timeout=10):
                     pass
 
         # the first holder's release was not affected by the failed attempt
@@ -38,7 +46,7 @@ class TestRedisLock(IsolatedAsyncioTestCase):
     async def test_released_on_exception(self):
         # Act
         with self.assertRaises(ValueError):
-            async with RedisLock(self.redis_client, 'job', timeout=10):
+            async with RedisLock(self.factory, 'job', timeout=10):
                 raise ValueError('boom')
 
         # Assert
@@ -46,7 +54,7 @@ class TestRedisLock(IsolatedAsyncioTestCase):
 
     async def test_extend_replaces_ttl(self):
         # Arrange
-        lock = RedisLock(self.redis_client, 'job', timeout=TIMEOUT)
+        lock = RedisLock(self.factory, 'job', timeout=TIMEOUT)
         await lock.acquire()
         await self.redis_client.pexpire('job', TIMEOUT_MS // 10)  # pretend most of the TTL is gone
 
@@ -60,7 +68,7 @@ class TestRedisLock(IsolatedAsyncioTestCase):
 
     async def test_release_tolerates_an_expired_lock(self):
         # Arrange
-        lock = RedisLock(self.redis_client, 'job', timeout=10)
+        lock = RedisLock(self.factory, 'job', timeout=10)
         await lock.acquire()
         await self.redis_client.delete('job')  # Redis dropped the key as if the TTL had passed
 
@@ -69,9 +77,9 @@ class TestRedisLock(IsolatedAsyncioTestCase):
 
     async def test_blocking_lock_waits_for_the_holder(self):
         # Arrange
-        holder = RedisLock(self.redis_client, 'job', timeout=1)
+        holder = RedisLock(self.factory, 'job', timeout=1)
         await holder.acquire()
-        waiter = RedisLock(self.redis_client, 'job', timeout=1, blocking=True)
+        waiter = RedisLock(self.factory, 'job', timeout=1, blocking=True)
 
         async def release_soon():
             await asyncio.sleep(0.05)
@@ -83,3 +91,63 @@ class TestRedisLock(IsolatedAsyncioTestCase):
         # Assert
         self.assertEqual(await self.redis_client.exists('job'), 1)
         await waiter.release()
+
+    async def test_extend_and_release_need_an_acquired_lock(self):
+        # Arrange
+        lock = RedisLock(self.factory, 'job', timeout=10)
+
+        # Act & Assert: the same LockError redis-py raises for a lock this object does not hold
+        with self.assertRaises(LockError):
+            await lock.release()
+        with self.assertRaises(LockError):
+            await lock.extend()
+
+    async def test_alias_picks_the_client(self):
+        # Arrange
+        other = FakeRedis()
+        factory = ConnectionManagerFactory(
+            {
+                'cache': ScopedRegistry[Redis](create_func=lambda: self.redis_client, scope_func=os.getpid),
+                'other': ScopedRegistry[Redis](create_func=lambda: other, scope_func=os.getpid),
+            },
+            default='cache',
+        )
+
+        # Act
+        async with RedisLock(factory, 'job', timeout=10, alias='other'):
+            held_other = await other.exists('job')
+            held_default = await self.redis_client.exists('job')
+
+        # Assert
+        self.assertEqual((held_other, held_default), (1, 0))
+        self.assertEqual(await other.exists('job'), 0)
+
+    async def test_client_is_borrowed_per_call_not_kept(self):
+        # Arrange: a manager that hands the client out and counts how often it is given back
+        exits = []
+
+        class CountingManager:
+            def __init__(self, registry):
+                self._registry = registry
+
+            async def __aenter__(self):
+                return await self._registry.set()
+
+            async def __aexit__(self, *exc_info):
+                exits.append(True)
+
+        factory = ConnectionManagerFactory(
+            {'cache': ScopedRegistry[Redis](create_func=lambda: self.redis_client, scope_func=os.getpid)},
+            default='cache',
+            connection_manager_class=CountingManager,
+        )
+        lock = RedisLock(factory, 'job', timeout=10)
+
+        # Act
+        await lock.acquire()
+        await lock.extend()
+        await lock.release()
+
+        # Assert: three borrows, three returns, and the lock is gone
+        self.assertEqual(len(exits), 3)
+        self.assertEqual(await self.redis_client.exists('job'), 0)

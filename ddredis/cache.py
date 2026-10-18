@@ -81,7 +81,7 @@ class GenericCache(ABC, Generic[DomainT]):
     _domain_class: ClassVar[type[Serializable]]
 
     ttl: ClassVar[int] = 5 * 60  # 5 minutes
-    client_factory: ClassVar[ConnectionManagerFactory[Any, Redis, AbstractAsyncContextManager[Redis]]]
+    client_factory: ClassVar[ConnectionManagerFactory[Any, Redis, Any]]
     alias: ClassVar[Hashable | None] = None
 
     def __init_subclass__(cls, **kwargs):

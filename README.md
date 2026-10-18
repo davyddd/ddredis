@@ -123,14 +123,15 @@ create_client = partial(
 
 ## RedisLock
 
-Distributed lock on `SET NX PX` with a Lua release (redis-py's `Lock`, `thread_local=False`). Acquiring a
-held lock raises `AlreadyAcquiredError` unless `blocking=True`, in which case it waits up to `timeout`.
+Distributed lock on `SET NX PX` with a Lua release (redis-py's `Lock`, `thread_local=False`). The client comes
+from a `ConnectionManagerFactory` like the cache's (`alias=` picks the Redis). Acquiring a held lock raises
+`AlreadyAcquiredError` unless `blocking=True`, in which case it waits up to `timeout`.
 
 ```python
 from ddredis.lock import AlreadyAcquiredError, RedisLock
 
 try:
-    async with redis_client_factory() as redis_client, RedisLock(redis_client, 'sync-profiles', timeout=30):
+    async with RedisLock(redis_client_factory, 'sync-profiles', timeout=30):
         await sync_profiles()
 except AlreadyAcquiredError:
     pass  # another worker is on it
