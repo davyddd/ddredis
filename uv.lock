@@ -201,7 +201,7 @@ toml = [
 
 [[package]]
 name = "ddredis"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "ddutils" },
@@ -228,7 +228,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ddutils", specifier = ">=0.3.1,<0.4.0" },
+    { name = "ddutils", specifier = ">=0.3.2,<0.4.0" },
     { name = "redis", specifier = ">=5.0,<9" },
 ]
 
@@ -252,11 +252,11 @@ test = [
 
 [[package]]
 name = "ddutils"
-version = "0.3.1"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/83/3b/1c92b38aac7bf5ebcb68de5d2916ae0cc9e6645edf25086b77d53ab35179/ddutils-0.3.1.tar.gz", hash = "sha256:09ef446ef57161ab1a56e2cfec674ac58bce64fc9a22bd7238774be55e7b7580", size = 18128, upload-time = "2026-10-14T14:46:41.021Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b5/7d/086b25d5915698bf14d8236a9acaccd2e6e3e244f150ec4bb60ee00e5157/ddutils-0.3.2.tar.gz", hash = "sha256:8f87ae5b6d7453f10fed5bb842b162e65400a45e89ddf4749071c286298d7fb7", size = 22087, upload-time = "2026-10-18T17:24:13.993Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/c4/d450e6acbb45331ab170ed4210eec0a882ffb798f8b62e7d04d31ba2850d/ddutils-0.3.1-py3-none-any.whl", hash = "sha256:e7c8ab8c70d4f53a6ee20cbd926988e056684e1d0e66e740d26b227ba24abdb0", size = 22584, upload-time = "2026-10-14T14:46:39.624Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/e1/01e8132066536ee03cf6852157c81abe579528a8414fca080e5544c50a70/ddutils-0.3.2-py3-none-any.whl", hash = "sha256:ad5efbb0a7ce9d410d6a956fcc19fdfdbfb116fa6e3e7784399f2275e0027323", size = 26886, upload-time = "2026-10-18T17:24:12.878Z" },
 ]
 
 [[package]]
