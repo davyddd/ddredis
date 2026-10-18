@@ -1,3 +1,3 @@
-from . import cache, decorators, lock
+from . import cache, decorators, feature_flags, lock
 
-__all__ = ('cache', 'decorators', 'lock')
+__all__ = ('cache', 'decorators', 'feature_flags', 'lock')

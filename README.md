@@ -143,6 +143,25 @@ replaces the TTL with the full `timeout` counted from now rather than adding to 
 long-lived holder beating steadily never pushes its expiry further out. `release()` tolerates a lock that
 already expired.
 
+## RedisFeatureFlagStorage
+
+The Redis backend of [ddutils](https://github.com/davyddd/ddutils) feature flags: one hash, the field is the flag
+name, the value its JSON record. The client comes from a `ConnectionManagerFactory` like the cache's; `rename` is
+one MULTI/EXEC pipeline. Redis errors raise `FeatureFlagStorageError`, so `FeatureFlags` keeps serving the last
+known values while Redis is down; a value that does not parse or validate is logged and read as the defaults.
+
+```python
+from ddredis.feature_flags import RedisFeatureFlagStorage
+from ddutils.feature_flags import FeatureFlags
+
+feature_flags = FeatureFlags(RedisFeatureFlagStorage(redis_client_factory))  # alias=..., key='feature_flags'
+
+if await feature_flags.is_enabled('new_checkout'):            # proportion 1.0: on or off for everyone
+    ...
+if await feature_flags.is_enabled('new_ranking', user_id):  # on for `proportion` of the users
+    ...
+```
+
 ## suppress_redis_errors
 
 Decorator for async functions: `RedisError` subclasses become a `None` result, everything else propagates.
