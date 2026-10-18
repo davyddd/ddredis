@@ -28,7 +28,7 @@ class RedisFeatureFlagStorage(FeatureFlagStorage):
 
     def __init__(
         self,
-        client_factory: ConnectionManagerFactory[Any, Redis, AbstractAsyncContextManager[Redis]],
+        client_factory: ConnectionManagerFactory[Any, Redis, Any],
         *,
         alias: Hashable | None = None,
         key: str = DEFAULT_FEATURE_FLAGS_KEY,
