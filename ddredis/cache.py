@@ -8,11 +8,14 @@ from typing import Any, ClassVar, Generic, Protocol, Self, TypeVar, cast
 from ddutils.class_helpers import get_generic_base_argument, require_class_attribute
 from ddutils.connections import ConnectionManagerFactory
 from ddutils.convertors import convert_camel_case_to_snake_case
+from ddutils.safe_decorators import safe_call
 from redis.asyncio import Redis
-
-from ddredis.decorators import suppress_redis_errors
+from redis.exceptions import RedisError
 
 JITTER_PERCENT = 10
+
+# Cache is best effort: a Redis failure reads as a miss and writes are dropped, never surfaced to the caller.
+_suppress_redis_errors = safe_call(default_result=None, exceptions=(RedisError,), capture_exception=False)
 
 
 class Serializable(Protocol):
@@ -40,7 +43,7 @@ class GenericCache(ABC, Generic[DomainT]):
     and uses JSON serialization/deserialization to store and retrieve data.
 
     Domain class must implement `model_validate_json` and `model_dump_json` methods
-    (compatible with Pydantic, msgspec, or custom implementations).
+    (pydantic models do; any class with the two methods works).
 
     The Redis client is obtained for every call from `client_factory`, a `ConnectionManagerFactory` called
     with `alias`, like a ddsql adapter runs a query inside `factory(alias=...)`. The factory owns the
@@ -57,7 +60,7 @@ class GenericCache(ABC, Generic[DomainT]):
         client_registries = {
             RedisConnectionAlias.CACHE: ScopedRegistry[Redis](
                 create_func=partial(Redis.from_url, 'redis://localhost/0'),
-                scope_func=os.getpid,
+                scope_func=process_loop_scope,
                 destructor_method_name='aclose',
             ),
         }
@@ -123,30 +126,30 @@ class GenericCache(ABC, Generic[DomainT]):
         except Exception:  # noqa: BLE001
             return None
 
-    @suppress_redis_errors
+    @_suppress_redis_errors
     async def get(self, key: Stringable) -> DomainT | None:
         """Retrieves and deserializes a domain object from the cache by its key."""
         async with self._open_client() as client:
             return await self._get(client, self._generate_key(key))
 
-    @suppress_redis_errors
+    @_suppress_redis_errors
     async def create(self, key: Stringable, value: DomainT) -> None:
         """Caches a new domain object or overwrites an existing one. Sets a TTL for the entry."""
         async with self._open_client() as client:
             await client.set(self._generate_key(key), value.model_dump_json(), ex=self._generate_ttl())
 
-    @suppress_redis_errors
+    @_suppress_redis_errors
     async def update(self, key: Stringable, value: DomainT) -> None:
         """Updates a domain object in the cache. Alias for `create`."""
         await self.create(key=key, value=value)
 
-    @suppress_redis_errors
+    @_suppress_redis_errors
     async def delete(self, key: Stringable) -> None:
         """Removes a domain object from the cache by its key."""
         async with self._open_client() as client:
             await client.delete(self._generate_key(key))
 
-    @suppress_redis_errors
+    @_suppress_redis_errors
     async def get_list(self, key_prefix: Stringable) -> list[DomainT]:
         """Returns all cached domain objects whose keys start with the given prefix."""
         pattern = f'{self._generate_key(key_prefix)}*'
@@ -158,7 +161,7 @@ class GenericCache(ABC, Generic[DomainT]):
                     result.append(item)
         return result
 
-    @suppress_redis_errors
+    @_suppress_redis_errors
     async def delete_by_filters(self, key_prefix: Stringable) -> None:
         """Removes all cached domain objects whose keys start with the given prefix."""
         pattern = f'{self._generate_key(key_prefix)}*'
