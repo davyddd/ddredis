@@ -28,7 +28,16 @@ fab bash       # bash inside the container
 ```
 
 This project was generated from [dd-lib-stub](https://github.com/davyddd/dd-lib-stub);
-run `copier update` to pull in template updates.
+run `uvx copier update` to pull in template updates.
+
+## Compatibility
+
+Python 3.11 to 3.14. What changed in each release, breaking changes included,
+is in the [GitHub releases](https://github.com/davyddd/ddredis/releases).
+
+<!-- The sections below are the library's own; copier update leaves them alone -->
+
+Depends on `redis>=6,<9` and `ddutils>=0.4.0,<0.5.0`. The tests run on fakeredis, no server is needed.
 
 ## GenericCache
 
@@ -44,14 +53,11 @@ client lives in (one `ScopedRegistry` per alias, a client per process and event 
 connections bind to the loop they were opened in), its lazy creation and its close on shutdown.
 
 ```python
-import asyncio
-import os
 from enum import Enum
 from functools import partial
-from typing import ClassVar
 
 from ddutils.connections import ConnectionManagerFactory
-from ddutils.scoped_registry import ScopedRegistry
+from ddutils.scoped_registry import ScopedRegistry, process_loop_scope
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
@@ -62,14 +68,10 @@ class RedisConnectionAlias(str, Enum):
     CACHE = 'cache'
 
 
-def client_scope() -> tuple[int, asyncio.AbstractEventLoop]:
-    return os.getpid(), asyncio.get_running_loop()
-
-
 client_registries = {
     RedisConnectionAlias.CACHE: ScopedRegistry[Redis](
-        create_func=partial(Redis.from_url, 'redis://localhost/0'),
-        scope_func=client_scope,
+        create_func=partial(Redis.from_url, 'redis://localhost/0', decode_responses=True),
+        scope_func=process_loop_scope,
         destructor_method_name='aclose',
     ),
 }
@@ -100,9 +102,19 @@ await cache.delete_by_filters(key_prefix='team-a')
 await redis_client_factory.close()                                     # on shutdown
 ```
 
+A subclass binds the domain class (`GenericCache[Profile]`; `TypeError` for a bare or still generic base) and
+declares `client_factory`, a `ConnectionManagerFactory` (`AttributeError` when missing, `TypeError` when something
+else), both checked at class definition. `alias` defaults to the factory's default, `ttl` to 300 seconds; the
+jitter is `ttl // 10`, so a `ttl` under 10 seconds has none.
+
+Keys are `:<snake_case_domain>:<key>`, with `str(key)` of whatever is passed; `get_list(key_prefix)` and
+`delete_by_filters(key_prefix)` run `SCAN MATCH :<prefix>:<key_prefix>*`, so `key_prefix` is a glob and the cost
+is the whole keyspace, not the matches. An entry that does not deserialize into the domain class reads as a miss
+and is skipped by `get_list`. The client may run with or without `decode_responses`.
+
 Redis errors are swallowed on purpose: for a cache, "unavailable" and "miss" lead to the same fallback. Do
 not use the cache for state where `None` has a meaning of its own. Transient failures (a worker that was just
-reloaded, a dropped connection) belong to the client, not to the cache: redis-py retries the errors listed in
+reloaded, a dropped connection) belong to the client, not to the cache: redis-py 6+ retries the errors listed in
 `retry_on_error` with its default `Retry` (3 attempts, exponential backoff with jitter), so a production
 `create_func` looks like this:
 
@@ -123,9 +135,12 @@ create_client = partial(
 
 ## RedisLock
 
-Distributed lock on `SET NX PX` with a Lua release (redis-py's `Lock`, `thread_local=False`). The client comes
-from a `ConnectionManagerFactory` like the cache's (`alias=` picks the Redis). Acquiring a held lock raises
-`AlreadyAcquiredError` unless `blocking=True`, in which case it waits up to `timeout`.
+`RedisLock(client_factory, key, timeout=10.0, blocking=False, *, alias=None)`: a distributed lock on `SET NX PX`
+with a Lua release (redis-py's `Lock`, `thread_local=False`). The client comes from a `ConnectionManagerFactory`
+like the cache's, borrowed for every call: the object holds only the token that identifies this holder, and a new
+redis-py `Lock` is built around the client each time. `key` is the Redis key as given, no prefix. Acquiring a held
+lock raises `AlreadyAcquiredError`; with `blocking=True` it waits up to `timeout` and raises the same error when
+the wait runs out. The lock is not reentrant, but the object can be acquired again after `release()`.
 
 ```python
 from ddredis.lock import AlreadyAcquiredError, RedisLock
@@ -142,14 +157,22 @@ drops the key and a competitor may enter while the first holder is still running
 comfortably exceeds the worst-case runtime, or call `extend()` periodically as a heartbeat. `extend()`
 replaces the TTL with the full `timeout` counted from now rather than adding to the remaining time, so a
 long-lived holder beating steadily never pushes its expiry further out. `release()` tolerates a lock that
-already expired.
+already expired, `extend()` on one raises redis-py's `LockNotOwnedError`; either without a prior `acquire()`
+raises redis-py's `LockError` (both from `redis.asyncio.lock`, not re-exported).
 
 ## RedisFeatureFlagStorage
 
-The Redis backend of [ddutils](https://github.com/davyddd/ddutils) feature flags: one hash, the field is the flag
-name, the value its JSON record. The client comes from a `ConnectionManagerFactory` like the cache's; `rename` is
-one MULTI/EXEC pipeline. Redis errors raise `FeatureFlagStorageError`, so `FeatureFlags` keeps serving the last
-known values while Redis is down; a value that does not parse or validate is logged and read as the defaults.
+The Redis backend of [ddutils](https://github.com/davyddd/ddutils) feature flags:
+`RedisFeatureFlagStorage(client_factory, *, alias=None, key='feature_flags')`, one hash under `key`
+(`DEFAULT_FEATURE_FLAGS_KEY`), the field is the flag name, the value its JSON record
+`{"enabled": true, "proportion": 1.0, "payload": {}}`. The client comes from a `ConnectionManagerFactory` like
+the cache's, with or without `decode_responses`; `rename` is one MULTI/EXEC pipeline. Redis errors raise
+`FeatureFlagStorageError`, so `FeatureFlags` keeps serving the last known values while Redis is down.
+
+A value that is not JSON or not a valid record is logged with an ERROR entry and read as the defaults, which
+means off: a record broken by hand disables its flag. The parsing is the strict `FeatureFlagRecord.from_dict`,
+an extra key is as malformed as a wrong value, while `enabled` accepts what the record accepts (`true`, `1`,
+`"yes"`, ...). `get_map` keeps the valid records when one is malformed.
 
 ```python
 from ddredis.feature_flags import RedisFeatureFlagStorage
@@ -157,14 +180,8 @@ from ddutils.feature_flags import FeatureFlags
 
 feature_flags = FeatureFlags(RedisFeatureFlagStorage(redis_client_factory))  # alias=..., key='feature_flags'
 
-if await feature_flags.is_enabled('new_checkout'):            # proportion 1.0: on or off for everyone
+if await feature_flags.is_enabled('new_checkout'):            # default proportion: on or off for everyone
     ...
 if await feature_flags.is_enabled('new_ranking', user_id):  # on for `proportion` of the users
     ...
 ```
-
-## suppress_redis_errors
-
-Decorator for async functions: `RedisError` subclasses become a `None` result, everything else propagates.
-`GenericCache` methods use it; apply it to your own Redis reads that should degrade instead of failing.
-

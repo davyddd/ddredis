@@ -1,13 +1,13 @@
 [project]
 name = "ddredis"
 description = "Redis helpers: generic JSON cache and distributed lock"
-version = "0.2.0"
+version = "0.3.0"
 authors = [{ name = "davyddd" }]
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
-keywords = ["python", "redis", "cache", "lock", "ddredis"]
+keywords = ["python", "ddredis", "redis", "redis-py", "asyncio", "key-value", "cache", "caching", "json cache", "ttl", "distributed lock", "lock", "feature flags", "feature toggle"]
 # uv_build does not derive these from requires-python (poetry did); PyPI and the pyversions badge read them
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -18,8 +18,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "redis>=5.0,<9",
-    "ddutils>=0.3.3,<0.4.0",
+    "redis>=6.0,<9",
+    "ddutils>=0.4.0,<0.5.0",
 ]
 
 [project.urls]
