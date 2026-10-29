@@ -14,8 +14,8 @@ concurrency:
 
 jobs:
     quality-assurance:
-        uses: davyddd/dd-lib-stub/.github/workflows/quality_assurance.yml@v0.0.12
+        uses: davyddd/dd-lib-stub/.github/workflows/quality_assurance.yml@v0.0.13
         with:
-            test-matrix: '{"python-version": ["3.11", "3.12", "3.13", "3.14"], "redis": ["redis<7", "redis<8", "redis<9"]}'
-            default-python-version: '3.14'
+            test-matrix: '{"python-version": ["3.11", "3.12", "3.13", "3.14", "3.15"], "redis": ["redis<7", "redis<8", "redis<9"]}'
+            default-python-version: '3.15'
         secrets: inherit
